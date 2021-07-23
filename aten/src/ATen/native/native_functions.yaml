@@ -487,6 +487,7 @@
 - func: all.out(Tensor self, int dim, bool keepdim=False, *, Tensor(a!) out) -> Tensor(a!)
   device_check: NoCheck   # TensorIterator
   structured: True
+  precomputed: int64_t dim
   dispatch:
     CPU, CUDA: all_out
 
@@ -508,6 +509,7 @@
 - func: any.out(Tensor self, int dim, bool keepdim=False, *, Tensor(a!) out) -> Tensor(a!)
   device_check: NoCheck   # TensorIterator
   structured: True
+  precomputed: int64_t dim
   dispatch:
     CPU, CUDA: any_out
 
@@ -8776,6 +8778,7 @@
 - func: avg_pool2d.out(Tensor self, int[2] kernel_size, int[2] stride=[], int[2] padding=0, bool ceil_mode=False, bool count_include_pad=True, int? divisor_override=None, *, Tensor(a!) out) -> Tensor(a!)
   python_module: nn
   structured: True
+  precomputed: int kH, int kW, int dH, int dW, int padH, int padW, int64_t nbatch, int64_t nInputPlane, int64_t inputHeight, int64_t inputWidth, int64_t outputWidth, int64_t outputHeight
   dispatch:
     CPU: avg_pool2d_out_cpu
     CUDA: avg_pool2d_out_cuda
