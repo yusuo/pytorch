@@ -17,7 +17,6 @@ namespace autograd {
 namespace generated {
 namespace details {
 
-// NOLINTNEXTLINE(cppcoreguidelines-avoid-non-const-global-variables)
 extern const char* kCudnnDoubleBackwardMsg;
 
 // A simple way to imperatively compute index ranges for slots
@@ -251,13 +250,6 @@ Tensor lu_unpack_backward(
   const variable_list& grads,
   const Tensor& LU_data,
   bool unpack_data
-);
-Tensor _det_lu_based_helper_backward(
-  const Tensor& det_grad,
-  const Tensor& det,
-  const Tensor& self,
-  const Tensor& lu,
-  const Tensor& pivs
 );
 
 Tensor cat_jvp(at::TensorList tensors, int64_t dim);
