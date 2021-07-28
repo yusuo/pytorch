@@ -659,6 +659,7 @@ struct to_ir {
     // to SSA while part of their original graph, and closures are ready to
     // be inlined into forked closures
     ConvertToSSA(graph);
+
     // convert loops with an iter and body condition specified to
     // python-recognize while loops. we do this so they can be exported,
     // and run the pass early to avoid jitter. Like conversion to SSA,
@@ -3789,13 +3790,48 @@ struct to_ir {
     // `Any` as a catch-all supertype). Assume `[]` is `List[Tensor]`
     TypePtr elem_type = TensorType::get();
 
+    // If `type_hint` is a Union, we're going to change it to be
+    // the type of the rhs List, so we need to store the original
+    // UnionType for later. `nullptr` means that we don't need to emit
+    // a `widenToUnion` node (either because we don't have a type hint
+    // or because the type hint wasn't a Union)
+    TypePtr annotated_union_type =
+        type_hint && type_hint->kind() == UnionType::Kind ? type_hint : nullptr;
+
+    // Basic `type_hint` check here for better error reporting. We also
+    // see if we can narrow down the actual type if the given type hint
+    // is a Union
     if (type_hint) {
-      if (type_hint->kind() == TypeKind::ListType) {
-        elem_type = type_hint->expectRef<ListType>().getElementType();
+      // If necessary/possible, make `type_hint` a ListType
+      if (auto union_type_hint = type_hint->cast<UnionType>()) {
+        std::vector<TypePtr> list_types;
+        std::copy_if(
+            union_type_hint->containedTypes().begin(),
+            union_type_hint->containedTypes().end(),
+            std::back_inserter(list_types),
+            [&](TypePtr type_ptr) {
+              return type_ptr->isSubtypeOf(AnyListType::get());
+            });
+        if (list_types.empty()) {
+          throw ErrorReport(ll)
+              << "Expected an Union type annotation "
+              << "with an inner List type, but got " << type_hint->repr_str();
+        } else if (values.empty() && list_types.size() > 1) {
+          throw ErrorReport(ll)
+              << "Cannot assign an empty list to a "
+              << "variable annotated to be type " << type_hint->repr_str()
+              << " because there are multiple possible List "
+              << "type candidates in the Union annotation";
+        } else {
+          type_hint = list_types[0];
+        }
+      }
+
+      if (auto list_type_hint = type_hint->cast<ListType>()) {
+        elem_type = list_type_hint->getElementType();
       } else {
-        // If the type hint was not `List[T]`, throw an error
-        throw ErrorReport(ll) << "Expected a List type hint but instead got "
-                              << type_hint->repr_str();
+        throw ErrorReport(ll) << "Expected an annotation of type "
+                              << "List, but got " << type_hint->repr_str();
       }
     }
 
@@ -3804,11 +3840,13 @@ struct to_ir {
 
       std::stringstream nowhere; // never used
 
-      const TypePtr element_type_hint =
-          type_hint ? type_hint->expect<ListType>()->getElementType() : nullptr;
-
+      // We don't want to use `elem_type` as the final argument to
+      // `unifyTypeList` because there's a chance that `elem_type` is
+      // the Tensor default
+      auto known_elem_type =
+          type_hint ? type_hint->cast<ListType>()->getElementType() : nullptr;
       c10::optional<TypePtr> unified = unifyTypeList(
-          types, nowhere, /*default_to_union=*/true, element_type_hint);
+          types, nowhere, /*default_to_union=*/true, known_elem_type);
 
       if (!type_hint && *unified == AnyType::get()) {
         TORCH_WARN(
@@ -3835,14 +3873,18 @@ struct to_ir {
       }
     }
 
-    Value* result =
-        graph->insertNode(graph->createList(elem_type, values))->output();
-    return result;
+    Node* result = graph->insertNode(graph->createList(elem_type, values));
+    if (annotated_union_type) {
+      Node* n = graph->insertNode(
+          graph->create(prim::unchecked_cast, {result->output()}));
+      n->output()->setType(std::move(annotated_union_type));
+      result = n;
+    }
+
+    return result->output();
   }
 
-  Value* emitSimpleExpr(
-      const TreeRef& tree,
-      const TypePtr& type_hint = nullptr) {
+  Value* emitSimpleExpr(const TreeRef& tree, TypePtr type_hint = nullptr) {
     switch (tree->kind()) {
       case TK_FLOOR_DIV:
       case '@': {
@@ -3944,10 +3986,45 @@ struct to_ir {
         TypePtr key_type = nullptr;
         TypePtr value_type = nullptr;
 
-        if (type_hint && type_hint->kind() == TypeKind::DictType) {
-          auto dict_type = type_hint->expect<DictType>();
-          key_type = dict_type->getKeyType();
-          value_type = dict_type->getValueType();
+        // See notes in `emitListLiteral` regarding the following logic
+
+        TypePtr annotated_union_type =
+            type_hint && type_hint->kind() == UnionType::Kind ? type_hint
+                                                              : nullptr;
+
+        if (type_hint) {
+          if (auto union_type_hint = type_hint->cast<UnionType>()) {
+            std::vector<TypePtr> dict_types;
+            std::copy_if(
+                union_type_hint->containedTypes().begin(),
+                union_type_hint->containedTypes().end(),
+                std::back_inserter(dict_types),
+                [&](TypePtr type_ptr) {
+                  return type_ptr->kind() == DictType::Kind;
+                });
+            if (dict_types.empty()) {
+              throw ErrorReport(dl) << "Expected an Union type annotation "
+                                    << "with an inner Dict type, but got "
+                                    << type_hint->repr_str();
+            } else if (values.empty() && dict_types.size() > 1) {
+              throw ErrorReport(dl)
+                  << "Cannot assign an empty dict to a "
+                  << "variable annotated to be type " << type_hint->repr_str()
+                  << " because there are multiple possible Dict "
+                  << "type candidates in the Union annotation";
+            } else {
+              type_hint = dict_types[0];
+            }
+          }
+
+          if (auto dict_type_hint = type_hint->cast<DictType>()) {
+            auto dict_type = type_hint->expect<DictType>();
+            key_type = dict_type->getKeyType();
+            value_type = dict_type->getValueType();
+          } else {
+            throw ErrorReport(dl) << "Expected an annotation of type "
+                                  << "Dict, but got " << type_hint->repr_str();
+          }
         } else if (keys.empty()) {
           key_type = StringType::get();
           value_type = TensorType::get();
@@ -4020,9 +4097,16 @@ struct to_ir {
           }
         }
 
-        return graph
-            ->insertNode(graph->createDict(key_type, value_type, keys, values))
-            ->output();
+        Node* result = graph->insertNode(
+            graph->createDict(key_type, value_type, keys, values));
+        if (annotated_union_type) {
+          Node* n = graph->insertNode(
+              graph->create(prim::unchecked_cast, {result->output()}));
+          n->output()->setType(std::move(annotated_union_type));
+          result = n;
+        }
+
+        return result->output();
       } break;
       case TK_LIST_COMP: {
         auto lc = ListComp(tree);
