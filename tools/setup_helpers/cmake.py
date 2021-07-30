@@ -286,12 +286,10 @@ class CMake:
                 build_options[var] = val
 
         # The default value cannot be easily obtained in CMakeLists.txt. We set it here.
-        py_lib_path = sysconfig.get_path('purelib')
-        cmake_prefix_path = build_options.get('CMAKE_PREFIX_PATH', None)
+        py_lib_path = cast(str, sysconfig.get_path('purelib'))
+        cmake_prefix_path = cast(str, build_options.get('CMAKE_PREFIX_PATH', None))
         if cmake_prefix_path:
-            build_options["CMAKE_PREFIX_PATH"] = (
-                cast(str, py_lib_path) + ";" + cast(str, cmake_prefix_path)
-            )
+            build_options["CMAKE_PREFIX_PATH"] = f'{py_lib_path};{cmake_prefix_path}'
         else:
             build_options['CMAKE_PREFIX_PATH'] = py_lib_path
 
