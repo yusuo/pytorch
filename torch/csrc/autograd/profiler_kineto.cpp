@@ -96,6 +96,9 @@ struct KinetoThreadLocalState : public ProfilerThreadLocalState {
       if (ctx->stack && !ctx->stack->empty()) {
         kineto_events_.back().stack(*ctx->stack);
       }
+      if (ctx->module_hierarchy) {
+        kineto_events_.back().moduleHierarchy(*ctx->module_hierarchy);
+      }
       if (ctx->extraArgs && !ctx->extraArgs->empty()) {
         kineto_events_.back().flops(computeFlops(std::string(fn.name().str()), *ctx->extraArgs));
       }
@@ -164,6 +167,9 @@ struct KinetoThreadLocalState : public ProfilerThreadLocalState {
       }
       if (kineto_event.hasStack()) {
         activity.addMetadata("Call stack", stacksToStr(kineto_event.stack()));
+      }
+      if (kineto_event.hasModuleHierarchy()) {
+        activity.addMetadata("Module Hierarchy", "\"" + kineto_event.moduleHierarchy() + "\"");
       }
       if (kineto_event.hasTypes()) {
         activity.addMetadata("Input type", dtypesToStr(kineto_event.dtypes()));
@@ -257,6 +263,10 @@ void pushProfilingCallbacks() {
               cs = prepareCallstack(jit::tracer::pythonCallstack());
             }
             ctx_ptr->stack = callstackStr(cs);
+          }
+          if (config.with_module_hierarchy &&
+              fn.scope() != at::RecordScope::BACKWARD_FUNCTION) {
+            ctx_ptr->module_hierarchy = jit::currentModuleHierarchy();
           }
   #endif
           if (config.state == ProfilerState::KINETO_GPU_FALLBACK) {
