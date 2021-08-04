@@ -11,8 +11,10 @@ from torch.utils.data.sampler import (
 from torch.utils.data.dataset import (
     ChainDataset,
     ConcatDataset,
+    DataChunk as DataChunk,
     Dataset,
     Dataset as MapDataPipe,
+    DFIterDataPipe as DFIterDataPipe,
     IterableDataset,
     IterableDataset as IterDataPipe,
     Subset,
